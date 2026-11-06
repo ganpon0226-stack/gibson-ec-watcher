@@ -2,10 +2,13 @@ import os
 import json
 import requests
 from bs4 import BeautifulSoup
+from urllib.parse import urlparse
 
+# Discord Webhook URL（GitHub Secretsから自動取得）
 DISCORD_WEBHOOK_URL = os.environ.get("DISCORD_WEBHOOK_URL")
 STATE_FILE = "watched_items.json"
 
+# PCブラウザの通信に偽装する共通ヘッダー
 HEADERS = {
     "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
 }
@@ -29,91 +32,93 @@ def save_current_state(state):
         print(f"状態保存エラー: {e}")
 
 def send_discord_notify(site_name, item_title, item_url):
-    """新規出品のみDiscordへ通知"""
+    """新規出品（差分）があった時だけDiscordへ通知"""
     if not DISCORD_WEBHOOK_URL:
-        print(f"[{site_name}] 新規検知 (Webhook未設定): {item_title} - {item_url}")
+        print(f"[{site_name}] 🔥【新規検知】 (Webhook未設定): {item_title} - {item_url}")
         return
 
     content = f"🚨 **【{site_name}】新着・在庫検知！**\n📌 **{item_title}**\n🔗 {item_url}"
     payload = {"content": content}
     try:
         requests.post(DISCORD_WEBHOOK_URL, json=payload, timeout=10)
-        print(f"[{site_name}] Discord通知完了: {item_title}")
+        print(f"[{site_name}] Discord通知送信完了: {item_title}")
     except Exception as e:
         print(f"[{site_name}] Discord通知エラー: {e}")
 
-def check_site_diff(name, url, link_selector):
-    """各社ECの検索結果を巡回し、過去になかった新しい商品URLだけを通知する"""
-    print(f"[{name}] チェック中...")
+def check_site(name, search_url, item_selector, current_state):
+    """各社ECの検索結果をチェックし、ヒット数をログ表示＆未通知の差分のみDiscordへ送る"""
     try:
-        res = requests.get(url, headers=HEADERS, timeout=15)
+        res = requests.get(search_url, headers=HEADERS, timeout=15)
         if res.status_code != 200:
             print(f"[{name}] ステータス異常: {res.status_code}")
             return
 
         if "ページが見つかりません" in res.text or "404 Not Found" in res.text:
-            print(f"[{name}] エラーページ検出")
+            print(f"[{name}] 検索結果ヒット数: 0 件 (エラーページ)")
             return
 
         soup = BeautifulSoup(res.text, "html.parser")
         
-        # 検索結果から各商品の「商品詳細ページへのリンク」をすべて取得
-        item_links = soup.select(link_selector)
-        
-        current_state = load_previous_state()
-        known_urls = current_state.get(name, [])
-        
-        new_known_urls = list(known_urls)
-        found_new = False
+        # 商品要素（または商品リンク要素）を取得
+        items = soup.select(item_selector)
+        count = len(items)
+        print(f"[{name}] 検索結果ヒット数: {count} 件")
 
-        for a_tag in item_links:
-            href = a_tag.get("href")
-            if not href:
-                continue
+        if count == 0:
+            return
+
+        # 過去に通知済みのURLリストを取得
+        known_urls = current_state.get(name, [])
+        new_urls = list(known_urls)
+
+        for a_tag in items:
+            # <a>タグ自体か、子要素の<a>タグを探す
+            if a_tag.name != 'a':
+                a_tag = a_tag.find('a')
             
-            # 相对パスを絶対パス等に補正（必要に応じて）
+            if not a_tag or not a_tag.get("href"):
+                continue
+
+            href = a_tag["href"]
+            
+            # 相対パスを絶対パスに補正
             if href.startswith("/"):
-                # ドメインを抽出して結合する簡易処理
-                from urllib.parse import urlparse
-                parsed_url = urlparse(url)
+                parsed_url = urlparse(search_url)
                 href = f"{parsed_url.scheme}://{parsed_url.netloc}{href}"
             elif not href.startswith("http"):
                 continue
 
             title = a_tag.get_text(strip=True) or "商品ページ"
 
-            # まだ記録されていないURL（＝本当の新着）の場合のみ通知
+            # 【差分判定】まだDiscordに送っていない新着URLの場合のみ通知
             if href not in known_urls:
-                print(f"[{name}] 新規商品を発見: {title} ({href})")
+                print(f"[{name}] ✨ 新規商品を発見！ Discordへ通知します: {title}")
                 send_discord_notify(name, title, href)
-                new_known_urls.append(href)
-                found_new = True
+                new_urls.append(href)
 
-        # 状態を更新（次回の比較用に今回のURLリストを保持）
-        current_state[name] = new_known_urls
-        save_current_state(current_state)
-
-        if not found_new:
-            print(f"[{name}] 新着なし（既存商品のみ、または0件）")
+        current_state[name] = new_urls
 
     except Exception as e:
         print(f"[{name}] アクセスエラー: {e}")
 
-def check_junsei_diff():
-    """Junsei Guitars専用の差分検知"""
+def check_junsei(current_state):
+    """Junsei Guitars専用（テキスト検知＆差分通知）"""
     name = "Junsei Guitars"
     url = "https://www.junsei-guitars.com/Gibson/"
-    print(f"[{name}] チェック中...")
     try:
         res = requests.get(url, headers=HEADERS, timeout=15)
         if res.status_code != 200:
+            print(f"[{name}] ステータス異常: {res.status_code}")
             return
 
-        soup = BeautifulSoup(res.text, "html.parser")
         text_lower = res.text.lower()
-        
         if "tak" in text_lower and ("dc" in text_lower or "matsumoto" in text_lower):
-            # 該当テキストが含まれる<a>タグ等を探す
+            print(f"[{name}] キーワード検知: 「Tak / DC」あり！")
+            
+            soup = BeautifulSoup(res.text, "html.parser")
+            known_urls = current_state.get(name, [])
+            new_urls = list(known_urls)
+
             for a in soup.find_all("a", href=True):
                 if "tak" in a.get_text().lower():
                     href = a["href"]
@@ -121,51 +126,53 @@ def check_junsei_diff():
                         href = f"https://www.junsei-guitars.com{href}"
                     title = a.get_text(strip=True)
                     
-                    current_state = load_previous_state()
-                    known_urls = current_state.get(name, [])
-                    
                     if href not in known_urls:
+                        print(f"[{name}] ✨ 新規掲載を発見！ Discordへ通知します: {title}")
                         send_discord_notify(name, title, href)
-                        known_urls.append(href)
-                        current_state[name] = known_urls
-                        save_current_state(current_state)
-        else:
-            print(f"[{name}] Tak DCの記載なし")
+                        new_urls.append(href)
 
+            current_state[name] = new_urls
+        else:
+            print(f"[{name}] キーワード検知: なし (0件)")
     except Exception as e:
-        print(f"[{name}] エラー: {e}")
+        print(f"[{name}] アクセスエラー: {e}")
 
 def main():
-    print("=== 各社ECサイト 差分監視スタート ===")
+    print("=== 各社ECサイト直監視（ログ：ヒット数表示 / Discord：差分通知）スタート ===")
     
-    # 1. イシバシ楽器 (商品リンクのCSSセレクタを指定)
-    check_site_diff("イシバシ楽器", "https://store.ishibashi.co.jp/search?q=gibson+tak+matsumoto", ".product-item a, .item-list a, .c-product-card__link")
+    current_state = load_previous_state()
+
+    # 1. イシバシ楽器
+    check_site("イシバシ楽器", "https://store.ishibashi.co.jp/search?q=gibson+tak+matsumoto", ".product-item a, .item-list a", current_state)
 
     # 2. クロサワ楽器
-    check_site_diff("クロサワ楽器", "https://shop.kurosawagakki.com/items/search?q=gibson%20tak%20matsumoto", ".item-card a, .item_box a")
+    check_site("クロサワ楽器", "https://shop.kurosawagakki.com/items/search?q=gibson%20tak%20matsumoto", ".item-card a, .item_box a", current_state)
 
     # 3. 島村楽器
-    check_site_diff("島村楽器", "https://store.shimamura.co.jp/ec/Facet?inputKeywordFacet=gibson%20tak%20matsumoto&kclsf=AND", ".search-result-item a, .product-list-item a")
+    check_site("島村楽器", "https://store.shimamura.co.jp/ec/Facet?inputKeywordFacet=gibson%20tak%20matsumoto&kclsf=AND", ".search-result-item a, .product-list-item a", current_state)
 
     # 4. イケベ楽器
-    check_site_diff("イケベ楽器", "https://www.ikebe-gakki.com/Form/Product/ProductList.aspx?shop=0&cat=&bid=ec&dpcnt=20&img=1&sort=07&swrd=gibson+tak+matsumoto&udns=1&fpfl=0&sfl=0&pno=1", ".product_item a, .c-product-list__item a")
+    check_site("イケベ楽器", "https://www.ikebe-gakki.com/Form/Product/ProductList.aspx?shop=0&cat=&bid=ec&dpcnt=20&img=1&sort=07&swrd=gibson+tak+matsumoto&udns=1&fpfl=0&sfl=0&pno=1", ".product_list_detail .product_item a, .c-product-list__item a", current_state)
 
     # 5. 三木楽器
-    check_site_diff("三木楽器", "https://www.mikigakki.com/shop/goods/search.aspx?search=x&keyword=gibson+tak+matsumoto&search=search", ".goods_list_item a, .item_box a")
+    check_site("三木楽器", "https://www.mikigakki.com/shop/goods/search.aspx?search=x&keyword=gibson+tak+matsumoto&search=search", ".goods_list_item a, .item_box a", current_state)
 
     # 6. 平野楽器ロッキン
-    check_site_diff("平野楽器ロッキン", "https://www.rockin.co.jp/shop/category?ProductsSearchModel%5Bgeneral_search%5D=gibson+tak+matsumoto&ProductsSearchModel%5Bonsale_only%5D=1", ".product_item a, .item-list a")
+    check_site("平野楽器ロッキン", "https://www.rockin.co.jp/shop/category?ProductsSearchModel%5Bgeneral_search%5D=gibson+tak+matsumoto&ProductsSearchModel%5Bonsale_only%5D=1", ".product_item a, .item-list a", current_state)
 
     # 7. ギタープラネット
-    check_site_diff("ギタープラネット", "https://www.guitarplanet.co.jp/?keyword=gibson+tak+matsumoto&x=0&y=0&act=product", ".item_list a, .product-box a")
+    check_site("ギタープラネット", "https://www.guitarplanet.co.jp/?keyword=gibson+tak+matsumoto&x=0&y=0&act=product", ".item_list a, .product-box a", current_state)
 
     # 8. ワタナベ楽器店
-    check_site_diff("ワタナベ楽器店", "https://www.watanabe-mi.com/shopping/search/?s_w=gibson+tak+matsumoto&page=1", ".item_box a, .list_item a")
+    check_site("ワタナベ楽器店", "https://www.watanabe-mi.com/shopping/search/?s_w=gibson+tak+matsumoto&page=1", ".item_box a, .list_item a", current_state)
 
     # 9. Junsei Guitars
-    check_junsei_diff()
+    check_junsei(current_state)
 
-    print("=== 監視チェック完了 ===")
+    # 今回の状態をファイルへ保存
+    save_current_state(current_state)
 
-if __name__ ==0_0 and __name__ == "__main__": # 通常のmain実行
+    print("=== 全サイトの監視チェック完了 ===")
+
+if __name__ == "__main__":
     main()
