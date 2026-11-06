@@ -50,7 +50,6 @@ def send_discord_notify(site_name, item_title, item_url):
         pass
 
 def extract_product_id(url):
-    """URLから商品固有のIDやパスを抜き出して重複をまとめる"""
     numbers = re.findall(r'\d+', url)
     if numbers:
         return max(numbers, key=len)
@@ -75,7 +74,7 @@ def check_site_filtered(name, search_url, current_state):
         seen_product_ids = set()
 
         exclude_url_keywords = [
-            "search", "login", "cart", "basket", "category", "guide", 
+            "login", "cart", "basket", "guide", 
             "faq", "wish", "mypage", "account", 
             "topics", "contact", "info", "policy", "#navi", "shop/category", "favorite"
         ]
@@ -86,23 +85,27 @@ def check_site_filtered(name, search_url, current_state):
 
         for a in all_links:
             href = a["href"]
+            netloc = parsed_url.netloc
             
             if href.startswith("/"):
-                full_url = f"{parsed_url.scheme}://{parsed_url.netloc}{href}"
+                full_url = f"{parsed_url.scheme}://{netloc}{href}"
             elif href.startswith("http"):
                 full_url = href
             else:
-                # 三木楽器のときだけ特殊な相対パスを正しく補完する
-                if "mikigakki.com" in parsed_url.netloc:
-                    full_url = f"{parsed_url.scheme}://{parsed_url.netloc}/shop/goods/{href}"
+                if "mikigakki.com" in netloc:
+                    full_url = f"{parsed_url.scheme}://{netloc}/shop/goods/{href}"
+                elif "watanabe-mi.com" in netloc:
+                    full_url = f"{parsed_url.scheme}://{netloc}/shopping/{href}"
                 else:
+                    full_url = f"{parsed_url.scheme}://{netloc}/{href}"
+
+            if netloc not in full_url:
+                continue
+
+            # ワタナベ楽器店のカテゴリ一覧（数字のディレクトリや検索画面自体）は弾くが、商品ページ(p...)は通す
+            if "watanabe-mi.com" in netloc:
+                if "/shopping/search" in full_url or ("/shopping/list/" in full_url and not "/p" in full_url):
                     continue
-
-            if parsed_url.netloc not in full_url:
-                continue
-
-            if "watanabe-mi.com" in full_url and "/shopping/list/0/" in full_url:
-                continue
 
             if any(ex in full_url.lower() for ex in exclude_url_keywords):
                 continue
@@ -158,7 +161,6 @@ def main():
     
     current_state = load_previous_state()
 
-    # 各社チェック実行
     check_site_filtered("イシバシ楽器", "https://store.ishibashi.co.jp/search?q=gibson+tak+matsumoto", current_state)
     check_site_filtered("クロサワ楽器", "https://shop.kurosawagakki.com/items/search?q=gibson%20tak%20matsumoto", current_state)
     check_site_filtered("島村楽器", "https://store.shimamura.co.jp/ec/Facet?inputKeywordFacet=gibson%20tak%20matsumoto&kclsf=AND", current_state)
@@ -166,7 +168,7 @@ def main():
     check_site_filtered("三木楽器", "https://www.mikigakki.com/shop/goods/search.aspx?search=x&keyword=gibson+tak+matsumoto&search=search", current_state)
     check_site_filtered("平野楽器ロッキン", "https://www.rockin.co.jp/shop/category?ProductsSearchModel%5Bgeneral_search%5D=gibson+tak+matsumoto&ProductsSearchModel%5Bonsale_only%5D=1", current_state)
     check_site_filtered("ギタープラネット", "https://www.guitarplanet.co.jp/?keyword=gibson+tak+matsumoto&x=0&y=0&act=product", current_state)
-    check_site_filtered("ワタナベ楽器店", "https://www.watanabe-mi.com/shopping/search/?s_w=gibson+tak+matsumoto", current_state)
+    check_site_filtered("ワタナベ楽器店", "https://www.watanabe-mi.com/shopping/search/?s_w=gibson+tak+matsumoto&page=1", current_state)
 
     save_current_state(current_state)
 
