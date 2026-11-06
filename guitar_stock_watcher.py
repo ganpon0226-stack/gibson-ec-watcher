@@ -50,8 +50,6 @@ def send_discord_notify(site_name, item_title, item_url):
         pass
 
 def extract_product_id(url):
-    """URLから商品コード（英数字）を抽出して重複をまとめる"""
-    # 英数字ハイフン含む商品コード、または数字
     match = re.search(r'([A-Za-z0-9\-]{6,})', url)
     if match:
         return match.group(1)
@@ -61,6 +59,7 @@ def extract_product_id(url):
     return url
 
 def check_site_filtered(name, search_url, current_state):
+    """一般の楽器店用（イシバシ、島村、イケベ、ロッキン、プラネット、ワタナベ）"""
     try:
         parsed_url = urlparse(search_url)
         headers = BASE_HEADERS.copy()
@@ -92,26 +91,19 @@ def check_site_filtered(name, search_url, current_state):
             href = a["href"]
             netloc = parsed_url.netloc
             
-            # 各社の相対パス補完処理
             if href.startswith("/"):
                 full_url = f"{parsed_url.scheme}://{netloc}{href}"
             elif href.startswith("http"):
                 full_url = href
             else:
-                # 三木楽器・ワタナベなどの相対リンクを安全に結合
-                full_url = f"{parsed_url.scheme}://{netloc}/{href.lstrip('./')}"
+                full_url = f"{parsed_url.scheme}://{netloc}/{href}"
 
             if netloc not in full_url:
                 continue
 
-            # ワタナベ楽器店のカテゴリ一覧などを弾き、商品詳細(p...)を通す
             if "watanabe-mi.com" in netloc:
                 if "/shopping/search" in full_url or ("/shopping/list/" in full_url and "/p" not in full_url):
                     continue
-
-            # 三木楽器の検索ページ自体やメニューリンクを除外
-            if "mikigakki.com" in netloc and "search.aspx" in full_url:
-                continue
 
             if any(ex in full_url.lower() for ex in exclude_url_keywords):
                 continue
@@ -156,7 +148,75 @@ def check_site_filtered(name, search_url, current_state):
                 new_found_count += 1
 
         current_state[name] = new_urls
+        print(f"[{name}] 検出数: {total_count} 件 (うち新規: {new_found_count} 件)")
 
+    except Exception as e:
+        print(f"[{name}] アクセスエラー: {e}")
+
+def check_miki_gakki(name, search_url, current_state):
+    """三木楽器専用のチェック関数"""
+    try:
+        parsed_url = urlparse(search_url)
+        headers = BASE_HEADERS.copy()
+        headers["Referer"] = f"{parsed_url.scheme}://{parsed_url.netloc}/"
+
+        res = requests.get(search_url, headers=headers, timeout=20)
+        if res.status_code != 200:
+            print(f"[{name}] ステータス異常 (HTTP {res.status_code})")
+            return
+
+        soup = BeautifulSoup(res.text, "html.parser")
+        all_links = soup.find_all("a", href=True)
+        
+        target_links = []
+        seen_product_ids = set()
+
+        for a in all_links:
+            href = a["href"]
+            # 三木楽器の相対パス (例: ../goods/goods.aspx?goods=...) を絶対パスに変換
+            if href.startswith("/"):
+                full_url = f"https://www.mikigakki.com{href}"
+            elif href.startswith("http"):
+                full_url = href
+            else:
+                full_url = f"https://www.mikigakki.com/shop/goods/{href.replace('../', '')}"
+
+            if "mikigakki.com" not in full_url or "search.aspx" in full_url:
+                continue
+
+            title = a.get_text(strip=True)
+            if not title or len(title) <= 3:
+                img = a.find("img")
+                if img and img.get("alt"):
+                    title = img["alt"]
+                else:
+                    continue
+
+            title_lower = title.lower()
+            if not any(kw in title_lower for kw in ["tak", "matsumoto", "gibson", "epiphone"]):
+                continue
+
+            prod_id = extract_product_id(full_url)
+            if prod_id in seen_product_ids:
+                continue
+
+            seen_product_ids.add(prod_id)
+            target_links.append({"title": title, "url": full_url})
+
+        total_count = len(target_links)
+        known_urls = current_state.get(name, [])
+        new_urls = list(known_urls)
+        new_found_count = 0
+
+        for p in target_links:
+            href = p["url"]
+            title = p["title"]
+            if href not in known_urls:
+                send_discord_notify(name, title, href)
+                new_urls.append(href)
+                new_found_count += 1
+
+        current_state[name] = new_urls
         print(f"[{name}] 検出数: {total_count} 件 (うち新規: {new_found_count} 件)")
 
     except Exception as e:
@@ -171,7 +231,10 @@ def main():
     check_site_filtered("クロサワ楽器", "https://shop.kurosawagakki.com/items/search?q=gibson%20tak%20matsumoto", current_state)
     check_site_filtered("島村楽器", "https://store.shimamura.co.jp/ec/Facet?inputKeywordFacet=gibson%20tak%20matsumoto&kclsf=AND", current_state)
     check_site_filtered("イケベ楽器", "https://www.ikebe-gakki.com/Form/Product/ProductList.aspx?shop=0&cat=&bid=ec&dpcnt=20&img=1&sort=07&swrd=gibson+tak+matsumoto&udns=1&fpfl=0&sfl=0&pno=1", current_state)
-    check_site_filtered("三木楽器", "https://www.mikigakki.com/shop/goods/search.aspx?search=x&keyword=gibson+tak+matsumoto&search=search", current_state)
+    
+    # 三木楽器のみ専用関数で処理
+    check_miki_gakki("三木楽器", "https://www.mikigakki.com/shop/goods/search.aspx?search=x&keyword=gibson+tak+matsumoto&search=search", current_state)
+    
     check_site_filtered("平野楽器ロッキン", "https://www.rockin.co.jp/shop/category?ProductsSearchModel%5Bgeneral_search%5D=gibson+tak+matsumoto&ProductsSearchModel%5Bonsale_only%5D=1", current_state)
     check_site_filtered("ギタープラネット", "https://www.guitarplanet.co.jp/?keyword=gibson+tak+matsumoto&x=0&y=0&act=product", current_state)
     check_site_filtered("ワタナベ楽器店", "https://www.watanabe-mi.com/shopping/search/?s_w=gibson+tak+matsumoto&page=1", current_state)
