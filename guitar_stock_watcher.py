@@ -4,11 +4,9 @@ import requests
 from bs4 import BeautifulSoup
 from urllib.parse import urlparse
 
-# Discord Webhook URL（GitHub Secretsから自動取得）
 DISCORD_WEBHOOK_URL = os.environ.get("DISCORD_WEBHOOK_URL")
 STATE_FILE = "watched_items.json"
 
-# 本物のChromeブラウザに偽装するヘッダー
 BASE_HEADERS = {
     "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36",
     "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8",
@@ -40,7 +38,6 @@ def save_current_state(state):
         print(f"状態保存エラー: {e}")
 
 def send_discord_notify(site_name, item_title, item_url):
-    """新規出品（差分）があった時だけDiscordへ通知"""
     if not DISCORD_WEBHOOK_URL:
         return
 
@@ -52,7 +49,6 @@ def send_discord_notify(site_name, item_title, item_url):
         pass
 
 def check_site_filtered(name, search_url, current_state):
-    """各社ECの検索結果をチェックし、件数のみを簡潔にログ出力する"""
     try:
         parsed_url = urlparse(search_url)
         headers = BASE_HEADERS.copy()
@@ -70,10 +66,14 @@ def check_site_filtered(name, search_url, current_state):
         target_links = []
         seen_urls = set()
 
-        exclude_keywords = [
+        exclude_url_keywords = [
             "search", "login", "cart", "basket", "category", "guide", 
             "faq", "wish", "mypage", "account", "shopping/list", 
-            "topics", "contact", "info", "policy", "#navi", "shop/category"
+            "topics", "contact", "info", "policy", "#navi", "shop/category", "favorite"
+        ]
+
+        exclude_item_keywords = [
+            "ストラップ", "strap", "ケース", "case", "ギグバッグ", "認定証", "ピック", "シールド"
         ]
 
         for a in all_links:
@@ -89,7 +89,11 @@ def check_site_filtered(name, search_url, current_state):
             if parsed_url.netloc not in full_url:
                 continue
 
-            if any(ex in full_url.lower() for ex in exclude_keywords):
+            if any(ex in full_url.lower() for ex in exclude_url_keywords):
+                continue
+
+            # すでに処理したURL（同一商品への別リンク画像やボタンなど）は完全にスキップ
+            if full_url in seen_urls:
                 continue
 
             title = a.get_text(strip=True)
@@ -98,16 +102,20 @@ def check_site_filtered(name, search_url, current_state):
                 if img and img.get("alt"):
                     title = img["alt"]
                 else:
+                    # テキストも画像altもない場合はリンクURL自体から推測またはスキップ
                     continue
 
             title_lower = title.lower()
+
+            if any(ex in title_lower for ex in exclude_item_keywords):
+                continue
+
             valid_keywords = ["tak", "matsumoto", "gibson", "epiphone"]
             if not any(kw in title_lower for kw in valid_keywords):
                 continue
 
-            if full_url not in seen_urls:
-                seen_urls.add(full_url)
-                target_links.append({"title": title, "url": full_url})
+            seen_urls.add(full_url)
+            target_links.append({"title": title, "url": full_url})
 
         total_count = len(target_links)
         
@@ -126,7 +134,6 @@ def check_site_filtered(name, search_url, current_state):
 
         current_state[name] = new_urls
 
-        # ★ ログには件数（全体数 ＆ 新規数）だけを1行でスッキリ表示
         print(f"[{name}] 検出数: {total_count} 件 (うち新規: {new_found_count} 件)")
 
     except Exception as e:
@@ -137,12 +144,12 @@ def main():
     
     current_state = load_previous_state()
 
-    # 各社チェック実行
+    # 各社チェック実行（三木楽器・ワタナベのURLを実際の検索画面に合わせ最適化）
     check_site_filtered("イシバシ楽器", "https://store.ishibashi.co.jp/search?q=gibson+tak+matsumoto", current_state)
     check_site_filtered("クロサワ楽器", "https://shop.kurosawagakki.com/items/search?q=gibson%20tak%20matsumoto", current_state)
     check_site_filtered("島村楽器", "https://store.shimamura.co.jp/ec/Facet?inputKeywordFacet=gibson%20tak%20matsumoto&kclsf=AND", current_state)
     check_site_filtered("イケベ楽器", "https://www.ikebe-gakki.com/Form/Product/ProductList.aspx?shop=0&cat=&bid=ec&dpcnt=20&img=1&sort=07&swrd=gibson+tak+matsumoto&udns=1&fpfl=0&sfl=0&pno=1", current_state)
-    check_site_filtered("三木楽器", "https://www.mikigakki.com/shop/goods/search.aspx?search=x&keyword=gibson+tak+matsumoto&search=search", current_state)
+    check_site_filtered("三木楽器", "https://www.mikigakki.com/shop/goods/search.aspx?keyword=gibson+tak+matsumoto", current_state)
     check_site_filtered("平野楽器ロッキン", "https://www.rockin.co.jp/shop/category?ProductsSearchModel%5Bgeneral_search%5D=gibson+tak+matsumoto&ProductsSearchModel%5Bonsale_only%5D=1", current_state)
     check_site_filtered("ギタープラネット", "https://www.guitarplanet.co.jp/?keyword=gibson+tak+matsumoto&x=0&y=0&act=product", current_state)
     check_site_filtered("ワタナベ楽器店", "https://www.watanabe-mi.com/shopping/search/?s_w=gibson+tak+matsumoto&page=1", current_state)
