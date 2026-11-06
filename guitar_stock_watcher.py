@@ -8,9 +8,19 @@ from urllib.parse import urlparse
 DISCORD_WEBHOOK_URL = os.environ.get("DISCORD_WEBHOOK_URL")
 STATE_FILE = "watched_items.json"
 
-# PCブラウザの通信に偽装する共通ヘッダー
-HEADERS = {
-    "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
+# 本物のChromeブラウザに限りなく偽装した拡張ヘッダー
+BASE_HEADERS = {
+    "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36",
+    "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8",
+    "Accept-Language": "ja,en-US;q=0.9,en;q=0.8",
+    "Accept-Encoding": "gzip, deflate, br",
+    "Connection": "keep-alive",
+    "Upgrade-Insecure-Requests": "1",
+    "Sec-Fetch-Dest": "document",
+    "Sec-Fetch-Mode": "navigate",
+    "Sec-Fetch-Site": "none",
+    "Sec-Fetch-User": "?1",
+    "Cache-Control": "max-age=0"
 }
 
 def load_previous_state():
@@ -32,7 +42,7 @@ def save_current_state(state):
         print(f"状態保存エラー: {e}")
 
 def send_discord_notify(site_name, item_title, item_url):
-    """新規出品（差分）があった時だけDiscordへ通知"""
+    """新着（差分）があった時だけDiscordへ通知"""
     if not DISCORD_WEBHOOK_URL:
         print(f"[{site_name}] 🔥【新規検知】 (Webhook未設定): {item_title} - {item_url}")
         return
@@ -46,11 +56,17 @@ def send_discord_notify(site_name, item_title, item_url):
         print(f"[{site_name}] Discord通知エラー: {e}")
 
 def check_site(name, search_url, item_selector, current_state):
-    """各社ECの検索結果をチェックし、ヒット数をログ表示＆未通知の差分のみDiscordへ送る"""
+    """拡張ヘッダーを用いて各社ECをチェック"""
     try:
-        res = requests.get(search_url, headers=HEADERS, timeout=15)
+        # 各サイトのドメインに応じたRefererを設定して弾かれにくくする
+        parsed_url = urlparse(search_url)
+        headers = BASE_HEADERS.copy()
+        headers["Referer"] = f"{parsed_url.scheme}://{parsed_url.netloc}/"
+
+        res = requests.get(search_url, headers=headers, timeout=20)
+        
         if res.status_code != 200:
-            print(f"[{name}] ステータス異常: {res.status_code}")
+            print(f"[{name}] ステータス異常 (HTTP {res.status_code})")
             return
 
         if "ページが見つかりません" in res.text or "404 Not Found" in res.text:
@@ -58,8 +74,6 @@ def check_site(name, search_url, item_selector, current_state):
             return
 
         soup = BeautifulSoup(res.text, "html.parser")
-        
-        # 商品要素（または商品リンク要素）を取得
         items = soup.select(item_selector)
         count = len(items)
         print(f"[{name}] 検索結果ヒット数: {count} 件")
@@ -67,12 +81,10 @@ def check_site(name, search_url, item_selector, current_state):
         if count == 0:
             return
 
-        # 過去に通知済みのURLリストを取得
         known_urls = current_state.get(name, [])
         new_urls = list(known_urls)
 
         for a_tag in items:
-            # <a>タグ自体か、子要素の<a>タグを探す
             if a_tag.name != 'a':
                 a_tag = a_tag.find('a')
             
@@ -81,16 +93,13 @@ def check_site(name, search_url, item_selector, current_state):
 
             href = a_tag["href"]
             
-            # 相対パスを絶対パスに補正
             if href.startswith("/"):
-                parsed_url = urlparse(search_url)
                 href = f"{parsed_url.scheme}://{parsed_url.netloc}{href}"
             elif not href.startswith("http"):
                 continue
 
             title = a_tag.get_text(strip=True) or "商品ページ"
 
-            # 【差分判定】まだDiscordに送っていない新着URLの場合のみ通知
             if href not in known_urls:
                 print(f"[{name}] ✨ 新規商品を発見！ Discordへ通知します: {title}")
                 send_discord_notify(name, title, href)
@@ -102,13 +111,16 @@ def check_site(name, search_url, item_selector, current_state):
         print(f"[{name}] アクセスエラー: {e}")
 
 def check_junsei(current_state):
-    """Junsei Guitars専用（テキスト検知＆差分通知）"""
+    """Junsei Guitars専用（拡張ヘッダー版）"""
     name = "Junsei Guitars"
     url = "https://www.junsei-guitars.com/Gibson/"
     try:
-        res = requests.get(url, headers=HEADERS, timeout=15)
+        headers = BASE_HEADERS.copy()
+        headers["Referer"] = "https://www.junsei-guitars.com/"
+
+        res = requests.get(url, headers=headers, timeout=20)
         if res.status_code != 200:
-            print(f"[{name}] ステータス異常: {res.status_code}")
+            print(f"[{name}] ステータス異常 (HTTP {res.status_code})")
             return
 
         text_lower = res.text.lower()
@@ -138,7 +150,7 @@ def check_junsei(current_state):
         print(f"[{name}] アクセスエラー: {e}")
 
 def main():
-    print("=== 各社ECサイト直監視（ログ：ヒット数表示 / Discord：差分通知）スタート ===")
+    print("=== 各社ECサイト直監視（拡張ヘッダー版）スタート ===")
     
     current_state = load_previous_state()
 
@@ -169,7 +181,6 @@ def main():
     # 9. Junsei Guitars
     check_junsei(current_state)
 
-    # 今回の状態をファイルへ保存
     save_current_state(current_state)
 
     print("=== 全サイトの監視チェック完了 ===")
