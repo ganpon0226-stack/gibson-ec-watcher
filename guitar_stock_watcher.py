@@ -146,27 +146,27 @@ def check_site_filtered(name, search_url, current_state):
     except Exception as e:
         print(f"[{name}] アクセスエラー: {e}")
 
-def check_miki_gakki_direct(name, search_url, current_state):
-    """三木楽器専用（デバッグログ出力付き）"""
+def check_miki_gakki_with_session(name, search_url, current_state):
+    """三木楽器専用（セッション維持＆Cookieウォームアップ版）"""
     try:
-        parsed_url = urlparse(search_url)
-        headers = BASE_HEADERS.copy()
-        headers["Referer"] = f"{parsed_url.scheme}://{parsed_url.netloc}/"
+        session = requests.Session()
+        session.headers.update(BASE_HEADERS)
 
-        res = requests.get(search_url, headers=headers, timeout=20)
-        print(f"[{name}] HTTPステータス: {res.status_code}, 最終URL: {res.url}")
+        # 1. まずトップページにアクセスしてセッション（Cookie）を確立する
+        session.get("https://www.mikigakki.com/shop/", timeout=20)
+
+        # 2. そのセッションを維持したまま検索URLにアクセス
+        res = session.get(search_url, timeout=20)
+        print(f"[{name}] HTTPステータス: {res.status_code}")
 
         if res.status_code != 200:
             return
 
         soup = BeautifulSoup(res.text, "html.parser")
-        page_title = soup.find("title")
-        print(f"[{name}] ページの<title>: {page_title.get_text() if page_title else 'なし'}")
-
-        # ページ内にある「/shop/g/」を含むリンクの総数を数えてみる
+        
+        # /shop/g/ を含むリンクを全て取得
         all_g_links = soup.find_all("a", href=lambda h: h and "/shop/g/" in h)
-        print(f"[{name}] ページ内の /shop/g/ リンク総数: {len(all_g_links)} 件")
-
+        
         target_links = []
         seen_ids = set()
 
@@ -187,7 +187,6 @@ def check_miki_gakki_direct(name, search_url, current_state):
                 continue
 
             title_lower = title.lower()
-            print(f"[{name} 候補発見]: {title}")
 
             exclude_item_keywords = ["ストラップ", "strap", "ケース", "case", "ギグバッグ", "認定証", "ピック", "シールド"]
             if any(ex in title_lower for ex in exclude_item_keywords):
@@ -234,7 +233,8 @@ def main():
     check_site_filtered("島村楽器", "https://store.shimamura.co.jp/ec/Facet?inputKeywordFacet=gibson%20tak%20matsumoto&kclsf=AND", current_state)
     check_site_filtered("イケベ楽器", "https://www.ikebe-gakki.com/Form/Product/ProductList.aspx?shop=0&cat=&bid=ec&dpcnt=20&img=1&sort=07&swrd=gibson+tak+matsumoto&udns=1&fpfl=0&sfl=0&pno=1", current_state)
     
-    check_miki_gakki_direct("三木楽器", "https://www.mikigakki.com/shop/goods/search.aspx?keyword=gibson+tak+matsumoto&search=search&search=x", current_state)
+    # 三木楽器はセッション維持版で実行
+    check_miki_gakki_with_session("三木楽器", "https://www.mikigakki.com/shop/goods/search.aspx?keyword=gibson+tak+matsumoto&search=search&search=x", current_state)
     
     check_site_filtered("平野楽器ロッキン", "https://www.rockin.co.jp/shop/category?ProductsSearchModel%5Bgeneral_search%5D=gibson+tak+matsumoto&ProductsSearchModel%5Bonsale_only%5D=1", current_state)
     check_site_filtered("ギタープラネット", "https://www.guitarplanet.co.jp/?keyword=gibson+tak+matsumoto&x=0&y=0&act=product", current_state)
