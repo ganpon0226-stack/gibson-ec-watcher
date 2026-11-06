@@ -50,16 +50,13 @@ def send_discord_notify(site_name, item_title, item_url):
         pass
 
 def extract_product_id(url):
-    match = re.search(r'([A-Za-z0-9\-]{6,})', url)
-    if match:
-        return match.group(1)
     numbers = re.findall(r'\d+', url)
     if numbers:
         return max(numbers, key=len)
     return url
 
 def check_site_filtered(name, search_url, current_state):
-    """一般の楽器店用（イシバシ、島村、イケベ、ロッキン、プラネット、ワタナベ）"""
+    """安定していた黄金期の共通チェック関数"""
     try:
         parsed_url = urlparse(search_url)
         headers = BASE_HEADERS.copy()
@@ -101,6 +98,7 @@ def check_site_filtered(name, search_url, current_state):
             if netloc not in full_url:
                 continue
 
+            # ワタナベ用の安全な個別除外
             if "watanabe-mi.com" in netloc:
                 if "/shopping/search" in full_url or ("/shopping/list/" in full_url and "/p" not in full_url):
                     continue
@@ -153,8 +151,8 @@ def check_site_filtered(name, search_url, current_state):
     except Exception as e:
         print(f"[{name}] アクセスエラー: {e}")
 
-def check_miki_gakki(name, search_url, current_state):
-    """三木楽器専用のチェック関数"""
+def check_miki_gakki_safe(name, search_url, current_state):
+    """三木楽器専用の独立関数（他の店舗に影響を与えない）"""
     try:
         parsed_url = urlparse(search_url)
         headers = BASE_HEADERS.copy()
@@ -169,11 +167,10 @@ def check_miki_gakki(name, search_url, current_state):
         all_links = soup.find_all("a", href=True)
         
         target_links = []
-        seen_product_ids = set()
+        seen_ids = set()
 
         for a in all_links:
             href = a["href"]
-            # 三木楽器の相対パス (例: ../goods/goods.aspx?goods=...) を絶対パスに変換
             if href.startswith("/"):
                 full_url = f"https://www.mikigakki.com{href}"
             elif href.startswith("http"):
@@ -196,11 +193,13 @@ def check_miki_gakki(name, search_url, current_state):
             if not any(kw in title_lower for kw in ["tak", "matsumoto", "gibson", "epiphone"]):
                 continue
 
-            prod_id = extract_product_id(full_url)
-            if prod_id in seen_product_ids:
-                continue
+            # 三木楽器の商品コード抽出
+            match = re.search(r'([A-Za-z0-9\-]{6,})', full_url)
+            prod_id = match.group(1) if match else full_url
 
-            seen_product_ids.add(prod_id)
+            if prod_id in seen_ids:
+                continue
+            seen_ids.add(prod_id)
             target_links.append({"title": title, "url": full_url})
 
         total_count = len(target_links)
@@ -227,13 +226,14 @@ def main():
     
     current_state = load_previous_state()
 
+    # 黄金期の安定メンバー
     check_site_filtered("イシバシ楽器", "https://store.ishibashi.co.jp/search?q=gibson+tak+matsumoto", current_state)
     check_site_filtered("クロサワ楽器", "https://shop.kurosawagakki.com/items/search?q=gibson%20tak%20matsumoto", current_state)
     check_site_filtered("島村楽器", "https://store.shimamura.co.jp/ec/Facet?inputKeywordFacet=gibson%20tak%20matsumoto&kclsf=AND", current_state)
     check_site_filtered("イケベ楽器", "https://www.ikebe-gakki.com/Form/Product/ProductList.aspx?shop=0&cat=&bid=ec&dpcnt=20&img=1&sort=07&swrd=gibson+tak+matsumoto&udns=1&fpfl=0&sfl=0&pno=1", current_state)
     
-    # 三木楽器のみ専用関数で処理
-    check_miki_gakki("三木楽器", "https://www.mikigakki.com/shop/goods/search.aspx?search=x&keyword=gibson+tak+matsumoto&search=search", current_state)
+    # 三木楽器は完全独立関数で実行
+    check_miki_gakki_safe("三木楽器", "https://www.mikigakki.com/shop/goods/search.aspx?search=x&keyword=gibson+tak+matsumoto&search=search", current_state)
     
     check_site_filtered("平野楽器ロッキン", "https://www.rockin.co.jp/shop/category?ProductsSearchModel%5Bgeneral_search%5D=gibson+tak+matsumoto&ProductsSearchModel%5Bonsale_only%5D=1", current_state)
     check_site_filtered("ギタープラネット", "https://www.guitarplanet.co.jp/?keyword=gibson+tak+matsumoto&x=0&y=0&act=product", current_state)
