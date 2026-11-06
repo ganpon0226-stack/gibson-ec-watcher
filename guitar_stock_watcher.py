@@ -1,5 +1,6 @@
 import os
 import json
+import re
 import requests
 from bs4 import BeautifulSoup
 from urllib.parse import urlparse
@@ -48,6 +49,15 @@ def send_discord_notify(site_name, item_title, item_url):
     except Exception:
         pass
 
+def extract_product_id(url):
+    """URLから商品固有のIDやパスを抜き出して重複をまとめる"""
+    # URL内の数字の列や商品コードを抽出
+    numbers = re.findall(r'\d+', url)
+    if numbers:
+        # 最も長い数字の並び、または最後の数字をIDとみなす
+        return max(numbers, key=len)
+    return url
+
 def check_site_filtered(name, search_url, current_state):
     try:
         parsed_url = urlparse(search_url)
@@ -64,7 +74,7 @@ def check_site_filtered(name, search_url, current_state):
         all_links = soup.find_all("a", href=True)
         
         target_links = []
-        seen_urls = set()
+        seen_product_ids = set()
 
         exclude_url_keywords = [
             "search", "login", "cart", "basket", "category", "guide", 
@@ -92,17 +102,12 @@ def check_site_filtered(name, search_url, current_state):
             if any(ex in full_url.lower() for ex in exclude_url_keywords):
                 continue
 
-            # すでに処理したURL（同一商品への別リンク画像やボタンなど）は完全にスキップ
-            if full_url in seen_urls:
-                continue
-
             title = a.get_text(strip=True)
             if not title or len(title) <= 3:
                 img = a.find("img")
                 if img and img.get("alt"):
                     title = img["alt"]
                 else:
-                    # テキストも画像altもない場合はリンクURL自体から推測またはスキップ
                     continue
 
             title_lower = title.lower()
@@ -114,7 +119,12 @@ def check_site_filtered(name, search_url, current_state):
             if not any(kw in title_lower for kw in valid_keywords):
                 continue
 
-            seen_urls.add(full_url)
+            # 商品IDで重複を完全に排除（画像リンクやボタンリンクの水増しを防ぐ）
+            prod_id = extract_product_id(full_url)
+            if prod_id in seen_product_ids:
+                continue
+
+            seen_product_ids.add(prod_id)
             target_links.append({"title": title, "url": full_url})
 
         total_count = len(target_links)
@@ -144,19 +154,19 @@ def main():
     
     current_state = load_previous_state()
 
-    # 各社チェック実行（三木楽器・ワタナベのURLを実際の検索画面に合わせ最適化）
+    # 各社チェック実行
     check_site_filtered("イシバシ楽器", "https://store.ishibashi.co.jp/search?q=gibson+tak+matsumoto", current_state)
     check_site_filtered("クロサワ楽器", "https://shop.kurosawagakki.com/items/search?q=gibson%20tak%20matsumoto", current_state)
     check_site_filtered("島村楽器", "https://store.shimamura.co.jp/ec/Facet?inputKeywordFacet=gibson%20tak%20matsumoto&kclsf=AND", current_state)
     check_site_filtered("イケベ楽器", "https://www.ikebe-gakki.com/Form/Product/ProductList.aspx?shop=0&cat=&bid=ec&dpcnt=20&img=1&sort=07&swrd=gibson+tak+matsumoto&udns=1&fpfl=0&sfl=0&pno=1", current_state)
-    check_site_filtered("三木楽器", "https://www.mikigakki.com/shop/goods/search.aspx?keyword=gibson+tak+matsumoto", current_state)
+    check_site_filtered("三木楽器", "https://www.mikigakki.com/shop/goods/search.aspx?search=x&keyword=gibson+tak+matsumoto", current_state)
     check_site_filtered("平野楽器ロッキン", "https://www.rockin.co.jp/shop/category?ProductsSearchModel%5Bgeneral_search%5D=gibson+tak+matsumoto&ProductsSearchModel%5Bonsale_only%5D=1", current_state)
     check_site_filtered("ギタープラネット", "https://www.guitarplanet.co.jp/?keyword=gibson+tak+matsumoto&x=0&y=0&act=product", current_state)
-    check_site_filtered("ワタナベ楽器店", "https://www.watanabe-mi.com/shopping/search/?s_w=gibson+tak+matsumoto&page=1", current_state)
+    check_site_filtered("ワタナベ楽器店", "https://www.watanabe-mi.com/shopping/search/?s_w=gibson+tak+matsumoto", current_state)
 
     save_current_state(current_state)
 
     print("=== チェック完了 ===")
 
 if __name__ == "__main__":
-    main()
+main()
