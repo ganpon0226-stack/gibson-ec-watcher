@@ -50,6 +50,11 @@ def send_discord_notify(site_name, item_title, item_url):
         pass
 
 def extract_product_id(url):
+    """URLから商品コード（英数字）を抽出して重複をまとめる"""
+    # 英数字ハイフン含む商品コード、または数字
+    match = re.search(r'([A-Za-z0-9\-]{6,})', url)
+    if match:
+        return match.group(1)
     numbers = re.findall(r'\d+', url)
     if numbers:
         return max(numbers, key=len)
@@ -87,25 +92,26 @@ def check_site_filtered(name, search_url, current_state):
             href = a["href"]
             netloc = parsed_url.netloc
             
+            # 各社の相対パス補完処理
             if href.startswith("/"):
                 full_url = f"{parsed_url.scheme}://{netloc}{href}"
             elif href.startswith("http"):
                 full_url = href
             else:
-                if "mikigakki.com" in netloc:
-                    full_url = f"{parsed_url.scheme}://{netloc}/shop/goods/{href}"
-                elif "watanabe-mi.com" in netloc:
-                    full_url = f"{parsed_url.scheme}://{netloc}/shopping/{href}"
-                else:
-                    full_url = f"{parsed_url.scheme}://{netloc}/{href}"
+                # 三木楽器・ワタナベなどの相対リンクを安全に結合
+                full_url = f"{parsed_url.scheme}://{netloc}/{href.lstrip('./')}"
 
             if netloc not in full_url:
                 continue
 
-            # ワタナベ楽器店のカテゴリ一覧（数字のディレクトリや検索画面自体）は弾くが、商品ページ(p...)は通す
+            # ワタナベ楽器店のカテゴリ一覧などを弾き、商品詳細(p...)を通す
             if "watanabe-mi.com" in netloc:
-                if "/shopping/search" in full_url or ("/shopping/list/" in full_url and not "/p" in full_url):
+                if "/shopping/search" in full_url or ("/shopping/list/" in full_url and "/p" not in full_url):
                     continue
+
+            # 三木楽器の検索ページ自体やメニューリンクを除外
+            if "mikigakki.com" in netloc and "search.aspx" in full_url:
+                continue
 
             if any(ex in full_url.lower() for ex in exclude_url_keywords):
                 continue
@@ -162,7 +168,7 @@ def main():
     current_state = load_previous_state()
 
     check_site_filtered("イシバシ楽器", "https://store.ishibashi.co.jp/search?q=gibson+tak+matsumoto", current_state)
-    # check_site_filtered("クロサワ楽器", "https://shop.kurosawagakki.com/items/search?q=gibson%20tak%20matsumoto", current_state)
+    check_site_filtered("クロサワ楽器", "https://shop.kurosawagakki.com/items/search?q=gibson%20tak%20matsumoto", current_state)
     check_site_filtered("島村楽器", "https://store.shimamura.co.jp/ec/Facet?inputKeywordFacet=gibson%20tak%20matsumoto&kclsf=AND", current_state)
     check_site_filtered("イケベ楽器", "https://www.ikebe-gakki.com/Form/Product/ProductList.aspx?shop=0&cat=&bid=ec&dpcnt=20&img=1&sort=07&swrd=gibson+tak+matsumoto&udns=1&fpfl=0&sfl=0&pno=1", current_state)
     check_site_filtered("三木楽器", "https://www.mikigakki.com/shop/goods/search.aspx?search=x&keyword=gibson+tak+matsumoto&search=search", current_state)
