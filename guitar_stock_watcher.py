@@ -42,19 +42,17 @@ def save_current_state(state):
 def send_discord_notify(site_name, item_title, item_url):
     """新規出品（差分）があった時だけDiscordへ通知"""
     if not DISCORD_WEBHOOK_URL:
-        print(f"[{site_name}] 🔥【新規検知】 (Webhook未設定): {item_title} - {item_url}")
         return
 
     content = f"🚨 **【{site_name}】Tak Matsumoto モデル新着検知！**\n📌 **{item_title}**\n🔗 {item_url}"
     payload = {"content": content}
     try:
         requests.post(DISCORD_WEBHOOK_URL, json=payload, timeout=10)
-        print(f"[{site_name}] Discord通知送信完了: {item_title}")
-    except Exception as e:
-        print(f"[{site_name}] Discord通知エラー: {e}")
+    except Exception:
+        pass
 
 def check_site_filtered(name, search_url, current_state):
-    """各社ECの検索結果をチェックし、ヒット件数を分かりやすくログ出力する"""
+    """各社ECの検索結果をチェックし、件数のみを簡潔にログ出力する"""
     try:
         parsed_url = urlparse(search_url)
         headers = BASE_HEADERS.copy()
@@ -111,31 +109,31 @@ def check_site_filtered(name, search_url, current_state):
                 seen_urls.add(full_url)
                 target_links.append({"title": title, "url": full_url})
 
-        count = len(target_links)
-        print(f"[{name}] 該当ギター検出数: {count} 件")
-
-        if count == 0:
-            return
-
+        total_count = len(target_links)
+        
         known_urls = current_state.get(name, [])
         new_urls = list(known_urls)
+        new_found_count = 0
 
         for p in target_links:
             href = p["url"]
             title = p["title"]
 
             if href not in known_urls:
-                print(f"  ✨ 新規検出 → Discord通知: {title}")
                 send_discord_notify(name, title, href)
                 new_urls.append(href)
+                new_found_count += 1
 
         current_state[name] = new_urls
+
+        # ★ ログには件数（全体数 ＆ 新規数）だけを1行でスッキリ表示
+        print(f"[{name}] 検出数: {total_count} 件 (うち新規: {new_found_count} 件)")
 
     except Exception as e:
         print(f"[{name}] アクセスエラー: {e}")
 
 def main():
-    print("=== 各社ECサイト監視 検出件数サマリー ===")
+    print("=== 各社ECサイト監視 サマリー確認 ===")
     
     current_state = load_previous_state()
 
