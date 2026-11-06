@@ -1,10 +1,7 @@
 name: Gibson EC Direct Watcher
 
 on:
-  schedule:
-    # 10分おきに自動実行 (11/25当日は '*/2 * * * *' などに短縮変更可能)
-    - cron: '*/10 * * * *'
-  workflow_dispatch: # 手動実行ボタン
+  workflow_dispatch: # cron-job.org や手動からのAPIトリガーを許可
 
 jobs:
   check-stock:
