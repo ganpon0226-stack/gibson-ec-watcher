@@ -24,3 +24,11 @@ jobs:
           DISCORD_WEBHOOK_URL: ${{ secrets.DISCORD_WEBHOOK_URL }}
         run: |
           python guitar_stock_watcher.py
+      
+      - name: Commit updated watched items
+        run: |
+          git config --global user.name "github-actions[bot]"
+          git config --global user.email "github-actions[bot]@users.noreply.github.com"
+          git add watched_items.json
+          git diff --quiet && git diff --staged --quiet || git commit -m "Update watched_items.json [skip ci]"
+          git push
