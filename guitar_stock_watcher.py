@@ -74,7 +74,6 @@ def check_site_filtered(name, search_url, current_state):
         target_links = []
         seen_product_ids = set()
 
-        # ワタナベの商品パス(shopping/list/p...)を通すため shopping/list を除外リストから修正
         exclude_url_keywords = [
             "search", "login", "cart", "basket", "category", "guide", 
             "faq", "wish", "mypage", "account", 
@@ -93,12 +92,12 @@ def check_site_filtered(name, search_url, current_state):
             elif href.startswith("http"):
                 full_url = href
             else:
-                continue
+                # 三木楽器の相対パス対策
+                full_url = f"{parsed_url.scheme}://{parsed_url.netloc}/shop/goods/{href}"
 
             if parsed_url.netloc not in full_url:
                 continue
 
-            # ワタナベの「/shopping/list/0/」のようなカテゴリ一覧は弾きつつ「/shopping/list/p」のような商品ページを通す
             if "watanabe-mi.com" in full_url and "/shopping/list/0/" in full_url:
                 continue
 
@@ -156,15 +155,15 @@ def main():
     
     current_state = load_previous_state()
 
-    # 各社チェック実行（三木楽器の検索URLを正しい形式に更新）
+    # 各社チェック実行（三木楽器の検索URLを詳細検索APIの形式に最適化）
     check_site_filtered("イシバシ楽器", "https://store.ishibashi.co.jp/search?q=gibson+tak+matsumoto", current_state)
     check_site_filtered("クロサワ楽器", "https://shop.kurosawagakki.com/items/search?q=gibson%20tak%20matsumoto", current_state)
     check_site_filtered("島村楽器", "https://store.shimamura.co.jp/ec/Facet?inputKeywordFacet=gibson%20tak%20matsumoto&kclsf=AND", current_state)
     check_site_filtered("イケベ楽器", "https://www.ikebe-gakki.com/Form/Product/ProductList.aspx?shop=0&cat=&bid=ec&dpcnt=20&img=1&sort=07&swrd=gibson+tak+matsumoto&udns=1&fpfl=0&sfl=0&pno=1", current_state)
-    check_site_filtered("三木楽器", "https://www.mikigakki.com/shop/goods/search.aspx?search=x&keyword=gibson+tak+matsumoto&search=search", current_state)
+    check_site_filtered("三木楽器", "https://www.mikigakki.com/shop/goods/search.aspx?keyword=gibson+tak+matsumoto&tree=&genre=&store=&kwd_and_or=1&search=search", current_state)
     check_site_filtered("平野楽器ロッキン", "https://www.rockin.co.jp/shop/category?ProductsSearchModel%5Bgeneral_search%5D=gibson+tak+matsumoto&ProductsSearchModel%5Bonsale_only%5D=1", current_state)
     check_site_filtered("ギタープラネット", "https://www.guitarplanet.co.jp/?keyword=gibson+tak+matsumoto&x=0&y=0&act=product", current_state)
-    check_site_filtered("ワタナベ楽器店", "https://www.watanabe-mi.com/shopping/search/?s_w=gibson+tak+matsumoto&page=1", current_state)
+    check_site_filtered("ワタナベ楽器店", "https://www.watanabe-mi.com/shopping/search/?s_w=gibson+tak+matsumoto", current_state)
 
     save_current_state(current_state)
 
