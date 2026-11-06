@@ -146,17 +146,14 @@ def check_site_filtered(name, search_url, current_state):
     except Exception as e:
         print(f"[{name}] アクセスエラー: {e}")
 
-def check_miki_gakki_with_session(name, search_url, current_state):
-    """三木楽器専用（セッション維持＆Cookieウォームアップ版）"""
+def check_miki_gakki_direct(name, search_url, current_state):
+    """三木楽器専用（商品カードクラスを直接狙う安定版）"""
     try:
-        session = requests.Session()
-        session.headers.update(BASE_HEADERS)
+        parsed_url = urlparse(search_url)
+        headers = BASE_HEADERS.copy()
+        headers["Referer"] = f"{parsed_url.scheme}://{parsed_url.netloc}/"
 
-        # 1. まずトップページにアクセスしてセッション（Cookie）を確立する
-        session.get("https://www.mikigakki.com/shop/", timeout=20)
-
-        # 2. そのセッションを維持したまま検索URLにアクセス
-        res = session.get(search_url, timeout=20)
+        res = requests.get(search_url, headers=headers, timeout=20)
         print(f"[{name}] HTTPステータス: {res.status_code}")
 
         if res.status_code != 200:
@@ -164,14 +161,18 @@ def check_miki_gakki_with_session(name, search_url, current_state):
 
         soup = BeautifulSoup(res.text, "html.parser")
         
-        # /shop/g/ を含むリンクを全て取得
-        all_g_links = soup.find_all("a", href=lambda h: h and "/shop/g/" in h)
+        # ご提供いただいたソースにある商品カードのクラスを指定
+        item_divs = soup.find_all("div", class_="block-goods-list-d--item")
         
         target_links = []
         seen_ids = set()
 
-        for a in all_g_links:
-            href = a["href"]
+        for item in item_divs:
+            a_tag = item.find("a", href=lambda h: h and "/shop/g/" in h)
+            if not a_tag:
+                continue
+
+            href = a_tag["href"]
             if href.startswith("/"):
                 full_url = f"https://www.mikigakki.com{href}"
             elif href.startswith("http"):
@@ -179,9 +180,11 @@ def check_miki_gakki_with_session(name, search_url, current_state):
             else:
                 full_url = f"https://www.mikigakki.com/shop/goods/{href}"
 
-            title = a.get("title")
+            # title属性から正確な商品名を取得
+            title = a_tag.get("title")
             if not title:
-                title = a.get_text(strip=True)
+                name_div = item.find("div", class_="block-goods-list-d--goods-name")
+                title = name_div.get_text(strip=True) if name_div else ""
 
             if not title or len(title) <= 3:
                 continue
@@ -233,8 +236,8 @@ def main():
     check_site_filtered("島村楽器", "https://store.shimamura.co.jp/ec/Facet?inputKeywordFacet=gibson%20tak%20matsumoto&kclsf=AND", current_state)
     check_site_filtered("イケベ楽器", "https://www.ikebe-gakki.com/Form/Product/ProductList.aspx?shop=0&cat=&bid=ec&dpcnt=20&img=1&sort=07&swrd=gibson+tak+matsumoto&udns=1&fpfl=0&sfl=0&pno=1", current_state)
     
-    # 三木楽器はセッション維持版で実行
-    check_miki_gakki_with_session("三木楽器", "https://www.mikigakki.com/shop/goods/search.aspx?keyword=gibson+tak+matsumoto&search=search&search=x", current_state)
+    # 三木楽器は直接URLアクセス＆正確なクラス指定で実行
+    check_miki_gakki_direct("三木楽器", "https://www.mikigakki.com/shop/goods/search.aspx?keyword=gibson+tak+matsumoto&search=search&search=x", current_state)
     
     check_site_filtered("平野楽器ロッキン", "https://www.rockin.co.jp/shop/category?ProductsSearchModel%5Bgeneral_search%5D=gibson+tak+matsumoto&ProductsSearchModel%5Bonsale_only%5D=1", current_state)
     check_site_filtered("ギタープラネット", "https://www.guitarplanet.co.jp/?keyword=gibson+tak+matsumoto&x=0&y=0&act=product", current_state)
