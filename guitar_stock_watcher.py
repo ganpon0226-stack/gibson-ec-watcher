@@ -51,10 +51,8 @@ def send_discord_notify(site_name, item_title, item_url):
 
 def extract_product_id(url):
     """URLから商品固有のIDやパスを抜き出して重複をまとめる"""
-    # URL内の数字の列や商品コードを抽出
     numbers = re.findall(r'\d+', url)
     if numbers:
-        # 最も長い数字の並び、または最後の数字をIDとみなす
         return max(numbers, key=len)
     return url
 
@@ -119,7 +117,6 @@ def check_site_filtered(name, search_url, current_state):
             if not any(kw in title_lower for kw in valid_keywords):
                 continue
 
-            # 商品IDで重複を完全に排除（画像リンクやボタンリンクの水増しを防ぐ）
             prod_id = extract_product_id(full_url)
             if prod_id in seen_product_ids:
                 continue
@@ -169,4 +166,4 @@ def main():
     print("=== チェック完了 ===")
 
 if __name__ == "__main__":
-main()
+    main()
